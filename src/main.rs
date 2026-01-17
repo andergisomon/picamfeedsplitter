@@ -97,7 +97,6 @@ fn main() -> Result<(), Error> {
 
     info!(actual_width, actual_height, stride, "Camera configured");
 
-    // Allocate buffers
     let mut alloc = FrameBufferAllocator::new(&cam);
     let buffers: Vec<_> = alloc
         .alloc(&stream)

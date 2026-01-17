@@ -47,17 +47,6 @@ iceoryx2 shared memory
 - mediamtx is a single binary, no config needed for basic use
 - FFmpeg does the heavy lifting for encoding, no Rust crate complexity
 
-## mediamtx Setup
-
-Download from: https://github.com/bluenviron/mediamtx/releases
-
-```bash
-# Linux arm64 (Raspberry Pi)
-wget https://github.com/bluenviron/mediamtx/releases/download/v1.9.3/mediamtx_v1.9.3_linux_arm64v8.tar.gz
-tar xzf mediamtx_v1.9.3_linux_arm64v8.tar.gz
-./mediamtx
-```
-
 Default ports:
 - RTSP: 8554 (FFmpeg pushes here)
 - WebRTC: 8889 (browser connects here)

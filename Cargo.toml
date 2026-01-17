@@ -4,13 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# IPC
 iceoryx2 = "0.8.1"
-
-# Camera (only needed for the publisher binary)
 libcamera = "0.6.0"
-
-# Error handling & logging
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,6 +1,4 @@
-set env vars for libcamera build scripts to work for cross comp:
-
-can't seem to get zigbuild to work properly. managed to get libcamera to build with these env vars setup, but iceroxy2 has trouble with posix APIs.
+can't seem to get zigbuild to work properly. managed to get libcamera to build with these env vars setup, but iceoryx2 has trouble with building its posix API wrappers.
 
 gave up making zigbuild and cross-rs work, so I used an LLM to create a docker image
 
