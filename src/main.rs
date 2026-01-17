@@ -1,7 +1,6 @@
 mod frame;
 
 use std::sync::mpsc;
-
 use frame::{Frame, MAX_FRAME_SIZE};
 use iceoryx2::prelude::*;
 use libcamera::{
@@ -17,7 +16,7 @@ use libcamera::{
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
-const SERVICE_NAME: &str = "camera/frames";
+const SERVICE_NAME: &str = "camera/frames"; // iox2 service name
 
 #[derive(Error, Debug)]
 enum Error {
@@ -34,7 +33,6 @@ fn main() -> Result<(), Error> {
         .with_env_filter("info,splitter=debug")
         .init();
 
-    // Parse args
     let mut width: u32 = 1280;
     let mut height: u32 = 720;
     let mut args = std::env::args().skip(1);
@@ -48,7 +46,6 @@ fn main() -> Result<(), Error> {
 
     info!(width, height, "Starting camera publisher");
 
-    // Set up iceoryx2 publisher
     let node = NodeBuilder::new()
         .create::<ipc::Service>()
         .map_err(|e| Error::Ipc(format!("{e:?}")))?;
@@ -66,7 +63,6 @@ fn main() -> Result<(), Error> {
 
     info!("IPC publisher ready");
 
-    // Set up camera
     let mgr = CameraManager::new().map_err(|e| Error::Camera(format!("{e:?}")))?;
     let cameras = mgr.cameras();
     let cam = cameras.get(0).ok_or(Error::NoCamera)?;
