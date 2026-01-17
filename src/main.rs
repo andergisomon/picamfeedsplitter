@@ -6,7 +6,7 @@ use libcamera::{
     camera::CameraConfigurationStatus,
     camera_manager::CameraManager,
     framebuffer::AsFrameBuffer,
-    framebuffer_allocator::FrameBufferAllocator,
+    framebuffer_allocator::{FrameBuffer, FrameBufferAllocator},
     framebuffer_map::MemoryMappedFrameBuffer,
     geometry::Size,
     request::ReuseFlag,
@@ -25,7 +25,7 @@ enum Error {
     Camera(String),
     #[error("iceoryx2 error: {0}")]
     Ipc(String),
-    #[error("Frame too large: {0} > {}", MAX_FRAME_SIZE)]
+    #[error("Frame too large: {0} > {MAX_FRAME_SIZE:?}")]
     FrameTooLarge(usize),
 }
 
@@ -123,7 +123,7 @@ fn main() -> Result<(), Error> {
         .map_err(|e| Error::Camera(format!("{e:?}")))?;
 
     for req in &mut requests {
-        cam.queue_request(req)
+        cam.queue_request(*req)
             .map_err(|e| Error::Camera(format!("{e:?}")))?;
     }
 
@@ -137,7 +137,14 @@ fn main() -> Result<(), Error> {
             .map_err(|e| Error::Camera(format!("{e:?}")))?;
 
         if let Some(fb) = req.buffer(&stream) {
-            let ts = fb.metadata().timestamp();
+            let fb: FrameBuffer = fb;
+            let ts = match fb.metadata() {
+                Some(val) => val.timestamp(),
+                None => {
+                    error!("fb metadata ist none");
+                    continue
+                }
+            };
 
             if let Some(plane) = fb.planes().get(0) {
                 let data = plane.data();
@@ -145,7 +152,6 @@ fn main() -> Result<(), Error> {
                 if data.len() > MAX_FRAME_SIZE {
                     error!(len = data.len(), "Frame too large, skipping");
                 } else {
-                    // Publish to shared memory
                     match publisher.loan_uninit() {
                         Ok(sample) => {
                             let sample = sample.write_payload(Frame {
@@ -178,7 +184,7 @@ fn main() -> Result<(), Error> {
         }
 
         req.reuse(ReuseFlag::REUSE_BUFFERS);
-        cam.queue_request(&mut req)
+        cam.queue_request(req)
             .map_err(|e| Error::Camera(format!("{e:?}")))?;
     }
 }

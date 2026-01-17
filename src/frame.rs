@@ -1,10 +1,13 @@
 //! Shared frame type for iceoryx2 IPC.
 
+use iceoryx2::prelude::ZeroCopySend;
+
 /// Max frame size: 1080p YUV420 = 1920 * 1080 * 1.5 ≈ 3.1MB
 pub const MAX_FRAME_SIZE: usize = 1920 * 1080 * 3 / 2;
 
 /// Frame stored in shared memory. Fixed-size for iceoryx2.
 #[repr(C)]
+#[derive(Debug, ZeroCopySend)]
 pub struct Frame {
     pub timestamp_ns: u64,
     pub sequence: u64,
