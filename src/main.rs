@@ -1,5 +1,7 @@
 mod frame;
 
+use std::sync::mpsc;
+
 use frame::{Frame, MAX_FRAME_SIZE};
 use iceoryx2::prelude::*;
 use libcamera::{
@@ -108,23 +110,33 @@ fn main() -> Result<(), Error> {
 
     info!(count = buffers.len(), "Allocated buffers");
 
-    // Create and queue requests
-    let mut requests = Vec::new();
-    for buf in &buffers {
-        let mut req = cam
-            .create_request(None)
-            .ok_or_else(|| Error::Camera("Failed to create request".into()))?;
-        req.add_buffer(&stream, buf)
-            .map_err(|e| Error::Camera(format!("{e:?}")))?;
-        requests.push(req);
-    }
+
+    // move frame buffer into a camera capture request
+    let requests: Vec<_> = buffers
+        .into_iter()
+        .map(|buf| {
+            let mut req = cam
+                .create_request(None)
+                .ok_or_else(|| Error::Camera("Failed to create request".into()))?;
+            req.add_buffer(&stream, buf)
+                .map_err(|e| Error::Camera(format!("{e:?}")))?;
+            Ok(req)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    // specify callback once camera capture request is completed
+    // the callback just sends the next camera capture request
+    let (tx, rx) = mpsc::channel();
+    cam.on_request_completed(move |req| {
+        tx.send(req).unwrap();
+    });
 
     cam.start(None)
         .map_err(|e| Error::Camera(format!("{e:?}")))?;
 
-    for req in &mut requests {
-        cam.queue_request(*req)
-            .map_err(|e| Error::Camera(format!("{e:?}")))?;
+    for req in requests {
+        cam.queue_request(req)
+            .map_err(|(_, e)| Error::Camera(format!("{e:?}")))?;
     }
 
     info!("Capture loop starting");
@@ -132,59 +144,72 @@ fn main() -> Result<(), Error> {
     let mut seq: u64 = 0;
 
     loop {
-        let mut req = cam
-            .wait_for_request()
-            .map_err(|e| Error::Camera(format!("{e:?}")))?;
+        // block on receive camera capture request
+        let mut req = rx.recv().map_err(|e| Error::Camera(format!("{e:?}")))?;
 
-        if let Some(fb) = req.buffer(&stream) {
-            let fb: FrameBuffer = fb;
-            let ts = match fb.metadata() {
-                Some(val) => val.timestamp(),
-                None => {
-                    error!("fb metadata ist none");
-                    continue
-                }
-            };
+        let fb: &MemoryMappedFrameBuffer<FrameBuffer> = match req.buffer(&stream) {
+            Some(b) => b,
+            None => {
+                warn!("No buffer in request");
+                continue;
+            }
+        };
 
-            if let Some(plane) = fb.planes().get(0) {
-                let data = plane.data();
+        let metadata = match fb.metadata() {
+            Some(m) => m,
+            None => {
+                warn!("metadata ist none");
+                continue;
+            }
+        };
 
-                if data.len() > MAX_FRAME_SIZE {
-                    error!(len = data.len(), "Frame too large, skipping");
-                } else {
-                    match publisher.loan_uninit() {
-                        Ok(sample) => {
-                            let sample = sample.write_payload(Frame {
-                                timestamp_ns: ts,
-                                sequence: seq,
-                                width: actual_width,
-                                height: actual_height,
-                                stride,
-                                len: data.len() as u32,
-                                data: {
-                                    let mut arr = [0u8; MAX_FRAME_SIZE];
-                                    arr[..data.len()].copy_from_slice(data);
-                                    arr
-                                },
-                            });
-                            let _ = sample.send();
-                            debug!(seq, len = data.len(), "Published");
-                        }
-                        Err(e) => {
-                            warn!("Loan failed: {e:?}");
-                        }
+        let ts = metadata.timestamp();
+        let planes = fb.data();
+
+        if let Some(plane_data) = planes.first() {
+            let bytes_used = metadata
+                .planes()
+                .get(0)
+                .map(|p| p.bytes_used as usize)
+                .unwrap_or(plane_data.len());
+
+            let data = &plane_data[..bytes_used];
+
+            if data.len() > MAX_FRAME_SIZE {
+                error!(len = data.len(), "Frame too large, skipping");
+            } else {
+                match publisher.loan_uninit() {
+                    Ok(sample) => {
+                        let sample = sample.write_payload(Frame {
+                            timestamp_ns: ts,
+                            sequence: seq,
+                            width: actual_width,
+                            height: actual_height,
+                            stride,
+                            len: data.len() as u32,
+                            data: {
+                                let mut arr = [0u8; MAX_FRAME_SIZE];
+                                arr[..data.len()].copy_from_slice(data);
+                                arr
+                            },
+                        });
+                        let _ = sample.send();
+                        debug!(seq, len = data.len(), "Published");
+                    }
+                    Err(e) => {
+                        warn!("Loan failed: {e:?}");
                     }
                 }
+            }
 
-                seq += 1;
-                if seq % 100 == 0 {
-                    info!(seq, "Progress");
-                }
+            seq += 1;
+            if seq % 100 == 0 {
+                info!(seq, "Progress");
             }
         }
 
         req.reuse(ReuseFlag::REUSE_BUFFERS);
         cam.queue_request(req)
-            .map_err(|e| Error::Camera(format!("{e:?}")))?;
+            .map_err(|(_, e)| Error::Camera(format!("{e:?}")))?;
     }
 }
