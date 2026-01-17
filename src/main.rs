@@ -26,9 +26,7 @@ enum Error {
     #[error("libcamera error: {0}")]
     Camera(String),
     #[error("iceoryx2 error: {0}")]
-    Ipc(String),
-    #[error("Frame too large: {0} > {MAX_FRAME_SIZE:?}")]
-    FrameTooLarge(usize),
+    Ipc(String)
 }
 
 fn main() -> Result<(), Error> {
