@@ -4,14 +4,8 @@ use std::sync::mpsc;
 use frame::{Frame, MAX_FRAME_SIZE};
 use iceoryx2::prelude::*;
 use libcamera::{
-    camera::CameraConfigurationStatus,
-    camera_manager::CameraManager,
-    framebuffer::AsFrameBuffer,
-    framebuffer_allocator::{FrameBuffer, FrameBufferAllocator},
-    framebuffer_map::MemoryMappedFrameBuffer,
-    geometry::Size,
-    request::ReuseFlag,
-    stream::StreamRole,
+    controls::*,
+    camera::{CameraConfigurationStatus, SensorConfiguration}, camera_manager::CameraManager, framebuffer::AsFrameBuffer, framebuffer_allocator::{FrameBuffer, FrameBufferAllocator}, framebuffer_map::MemoryMappedFrameBuffer, geometry::Size, request::ReuseFlag, stream::StreamRole
 };
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
@@ -103,7 +97,6 @@ fn main() -> Result<(), Error> {
 
     info!(count = buffers.len(), "Allocated buffers");
 
-
     // move frame buffer into a camera capture request
     let requests: Vec<_> = buffers
         .into_iter()
@@ -111,6 +104,8 @@ fn main() -> Result<(), Error> {
             let mut req = cam
                 .create_request(None)
                 .ok_or_else(|| Error::Camera("Failed to create request".into()))?;
+            req.controls_mut().set(AeEnable(true)) // explicitly enable autoexposure
+                .map_err(|e| Error::Camera(format!("{e:?}")));
             req.add_buffer(&stream, buf)
                 .map_err(|e| Error::Camera(format!("{e:?}")))?;
             Ok(req)
