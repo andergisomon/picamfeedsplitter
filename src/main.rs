@@ -105,7 +105,7 @@ fn main() -> Result<(), Error> {
                 .create_request(None)
                 .ok_or_else(|| Error::Camera("Failed to create request".into()))?;
             req.controls_mut().set(AeEnable(true)) // explicitly enable autoexposure
-                .map_err(|e| Error::Camera(format!("{e:?}")));
+                .map_err(|e| Error::Camera(format!("{e:?}")))?;
             req.add_buffer(&stream, buf)
                 .map_err(|e| Error::Camera(format!("{e:?}")))?;
             Ok(req)
