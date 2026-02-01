@@ -397,6 +397,7 @@ dependencies = [
  "bindgen 0.72.1",
  "cc",
  "iceoryx2-pal-posix",
+ "libc",
 ]
 
 [[package]]

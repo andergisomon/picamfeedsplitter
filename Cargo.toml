@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iceoryx2 = "0.8.1"
+iceoryx2 = { version = "0.8.1", features = ["libc_platform"]}
 libcamera = "0.6.0"
 thiserror = "2"
 tracing = "0.1"
