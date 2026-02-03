@@ -23,3 +23,14 @@ docker run --rm -t \
     -w /app pi-builder \
     cargo build --target aarch64-unknown-linux-gnu --release --color=always
 ```
+
+Build webrtc_streamer:
+
+```bash
+docker run --rm -t \
+    -v "$(pwd)":/app \
+    -v ~/.cargo/registry:/root/.cargo/registry \
+    -v ~/.cargo/git:/root/.cargo/git \
+    -w /app pi-builder \
+    cargo build --example webrtc_streamer --target aarch64-unknown-linux-gnu --release --color=always
+```

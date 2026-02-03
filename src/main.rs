@@ -1,7 +1,7 @@
 mod frame;
 
 use std::sync::mpsc;
-use frame::{Frame, MAX_FRAME_SIZE};
+use frame::{Frame, PixelFormat, MAX_FRAME_SIZE};
 use iceoryx2::prelude::*;
 use libcamera::{
     controls::*,
@@ -84,8 +84,15 @@ fn main() -> Result<(), Error> {
     let actual_width = stream_config.get_size().width;
     let actual_height = stream_config.get_size().height;
     let stride = stream_config.get_stride() as u32;
+    let fourcc = stream_config.get_pixel_format().fourcc();
+    let pixel_format = match &fourcc.to_le_bytes() {
+        b"YU12" => PixelFormat::Yuv420,
+        b"NV12" => PixelFormat::Nv12,
+        b"NV21" => PixelFormat::Nv21,
+        _ => PixelFormat::Unknown,
+    };
 
-    info!(actual_width, actual_height, stride, "Camera configured");
+    info!(actual_width, actual_height, stride, fourcc = ?std::str::from_utf8(&fourcc.to_le_bytes()), "Camera configured");
 
     let mut alloc = FrameBufferAllocator::new(&cam);
     let buffers: Vec<_> = alloc
@@ -153,46 +160,51 @@ fn main() -> Result<(), Error> {
 
         let ts = metadata.timestamp();
         let planes = fb.data();
+        let plane_metadata = metadata.planes();
 
-        if let Some(plane_data) = planes.first() {
-            let bytes_used = metadata
-                .planes()
-                .get(0)
+        // Collect all plane data into contiguous buffer
+        let mut frame_data = [0u8; MAX_FRAME_SIZE];
+        let mut offset = 0usize;
+
+        for (i, plane_data) in planes.iter().enumerate() {
+            let bytes_used = plane_metadata
+                .get(i)
                 .map(|p| p.bytes_used as usize)
                 .unwrap_or(plane_data.len());
 
-            let data = &plane_data[..bytes_used];
+            if offset + bytes_used > MAX_FRAME_SIZE {
+                error!(plane = i, bytes_used, offset, "Frame too large, skipping");
+                break;
+            }
 
-            if data.len() > MAX_FRAME_SIZE {
-                error!(len = data.len(), "Frame too large, skipping");
-            } else {
-                match publisher.loan_uninit() {
-                    Ok(sample) => {
-                        let sample = sample.write_payload(Frame {
-                            timestamp_ns: ts,
-                            sequence: seq,
-                            width: actual_width,
-                            height: actual_height,
-                            stride,
-                            len: data.len() as u32,
-                            data: {
-                                let mut arr = [0u8; MAX_FRAME_SIZE];
-                                arr[..data.len()].copy_from_slice(data);
-                                arr
-                            },
-                        });
-                        let _ = sample.send();
-                        debug!(seq, len = data.len(), "Published");
-                    }
-                    Err(e) => {
-                        warn!("Loan failed: {e:?}");
-                    }
+            frame_data[offset..offset + bytes_used].copy_from_slice(&plane_data[..bytes_used]);
+            offset += bytes_used;
+        }
+
+        if offset > 0 {
+            match publisher.loan_uninit() {
+                Ok(sample) => {
+                    let sample = sample.write_payload(Frame {
+                        timestamp_ns: ts,
+                        sequence: seq,
+                        width: actual_width,
+                        height: actual_height,
+                        stride,
+                        format: pixel_format,
+                        len: offset as u32,
+                        data: frame_data,
+                    });
+                    let _ = sample.send();
+                    debug!(seq, len = offset, planes = planes.len(), "Published");
+                }
+                Err(e) => {
+                    warn!("Loan failed: {e:?}");
                 }
             }
 
             seq += 1;
             if seq % 100 == 0 {
-                info!(seq, "Progress");
+                info!(seq, planes = planes.len(), "Progress");
             }
         }
 
