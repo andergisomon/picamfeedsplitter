@@ -15,6 +15,7 @@ pub enum PixelFormat {
 
 #[repr(C)]
 #[derive(Debug, ZeroCopySend)]
+#[type_name("Frame")]
 pub struct Frame {
     pub timestamp_ns: u64,
     pub sequence: u64,
