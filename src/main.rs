@@ -1,6 +1,7 @@
 mod frame;
 
 use std::sync::mpsc;
+use std::panic;
 use frame::{Frame, PixelFormat, MAX_FRAME_SIZE};
 use iceoryx2::prelude::*;
 use libcamera::{
@@ -22,10 +23,17 @@ enum Error {
     Ipc(String)
 }
 
+const MAX_RETRIES: u32 = 5;
+const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn main() -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter("info,splitter=debug")
         .init();
+
+    panic::set_hook(Box::new(|info| {
+        eprintln!("PANIC on thread {:?}: {info}", std::thread::current().name());
+    }));
 
     let mut width: u32 = 1280;
     let mut height: u32 = 720;
@@ -38,7 +46,26 @@ fn main() -> Result<(), Error> {
         }
     }
 
-    info!(width, height, "Starting camera publisher");
+    let mut retries = 0;
+    loop {
+        info!(width, height, attempt = retries + 1, "Starting camera publisher");
+        match run_camera(width, height) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                retries += 1;
+                error!(%e, attempt = retries, "Camera failed");
+                if retries >= MAX_RETRIES {
+                    error!("Max retries reached, giving up");
+                    return Err(e);
+                }
+                info!(?RETRY_DELAY, "Restarting camera...");
+                std::thread::sleep(RETRY_DELAY);
+            }
+        }
+    }
+}
+
+fn run_camera(width: u32, height: u32) -> Result<(), Error> {
 
     let node = NodeBuilder::new()
         .create::<ipc::Service>()
@@ -123,7 +150,7 @@ fn main() -> Result<(), Error> {
     // the callback just sends the next camera capture request
     let (tx, rx) = mpsc::channel();
     cam.on_request_completed(move |req| {
-        tx.send(req).unwrap();
+        let _ = tx.send(req); // don't panic if receiver dropped
     });
 
     cam.start(None)
@@ -138,9 +165,22 @@ fn main() -> Result<(), Error> {
 
     let mut seq: u64 = 0;
 
+    let recv_timeout = std::time::Duration::from_millis(800); // < libcamera's 1s dequeue timeout
+
     loop {
-        // block on receive camera capture request
-        let mut req = rx.recv().map_err(|e| Error::Camera(format!("{e:?}")))?;
+        // block on receive camera capture request, but bail before libcamera's internal timeout
+        // panics on the callback thread
+        let mut req = match rx.recv_timeout(recv_timeout) {
+            Ok(req) => req,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                error!("No frame received in {recv_timeout:?}, camera may have stalled");
+                cam.stop().ok();
+                return Err(Error::Camera("Frame receive timeout — camera stalled".into()));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(Error::Camera("Camera channel disconnected".into()));
+            }
+        };
 
         let fb: &MemoryMappedFrameBuffer<FrameBuffer> = match req.buffer(&stream) {
             Some(b) => b,
@@ -209,7 +249,10 @@ fn main() -> Result<(), Error> {
         }
 
         req.reuse(ReuseFlag::REUSE_BUFFERS);
-        cam.queue_request(req)
-            .map_err(|(_, e)| Error::Camera(format!("{e:?}")))?;
+        match panic::catch_unwind(panic::AssertUnwindSafe(|| cam.queue_request(req))) {
+            Ok(Ok(())) => {}
+            Ok(Err((_, e))) => return Err(Error::Camera(format!("{e:?}"))),
+            Err(_) => return Err(Error::Camera("libcamera panicked during queue_request".into())),
+        }
     }
 }
